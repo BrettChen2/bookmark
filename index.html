@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能書籤 Pro - 原檔覆寫修復版</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .modal { transition: opacity 0.2s ease; }
+    body.modal-active { overflow: hidden; }
+    
+    @keyframes pulse-bg { 
+      0%, 100% { background-color: rgba(243, 244, 246, 1); } 
+      50% { background-color: rgba(229, 231, 235, 0.5); } 
+    }
+    .fetching { animation: pulse-bg 1.5s infinite; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8">
+  <div class="max-w-7xl mx-auto space-y-8">
+    
+    <!-- 頂部檔案控制列 -->
+    <header class="bg-white p-5 rounded-2xl shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border border-gray-100">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-2"><span>🔖</span> 智能書籤系統 Pro</h1>
+        <p class="text-xs mt-1 flex items-center gap-1.5" id="file-status">
+          <span class="w-2.5 h-2.5 rounded-full bg-green-500" id="status-indicator"></span>
+          <span class="text-gray-600 font-medium" id="file-status-text">資料已自動即時同步儲存於瀏覽器</span>
+        </p>
+      </div>
+
+      <!-- 按鈕控制區 -->
+      <div class="flex flex-wrap gap-2.5">
+        <button id="btn-open-file" class="bg-blue-50 hover:bg-blue-100 text-blue-600 font-medium px-4 py-2 rounded-xl text-sm transition flex items-center gap-1.5 cursor-pointer">
+          📂 開啟 CSV 檔
+        </button>
+        <button id="btn-save-file" class="bg-green-600 hover:bg-green-700 text-white font-medium px-5 py-2.5 rounded-xl text-sm transition shadow-sm cursor-pointer flex items-center gap-1.5">
+          💾 儲存原檔
+        </button>
+        <button id="btn-save-as" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-xl text-sm transition flex items-center gap-1.5 cursor-pointer">
+          📄 另存新檔
+        </button>
+      </div>
+    </header>
+
+    <!-- 狀態提示列 -->
+    <div id="status-alert" class="hidden p-4 rounded-xl text-sm font-medium border my-4"></div>
+
+    <!-- 1. 極速新增區塊 -->
+    <section class="bg-white p-4 rounded-xl shadow border border-gray-100">
+      <div class="flex gap-2">
+        <input type="url" id="url-input" placeholder="貼上完整網址 (需包含 http:// 或 https://) *" required class="flex-1 px-4 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-400 focus:outline-none transition text-sm">
+        <button id="btn-add-fast" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-8 py-2 rounded-lg transition flex items-center gap-2 shadow text-sm cursor-pointer">
+          <span>⚡ 秒速加入</span>
+        </button>
+      </div>
+      <p class="text-xs text-gray-400 mt-2 pl-1">貼上網址立刻完成。縮圖與標題背景補全，失敗可至修改視窗選擇本機圖片。</p>
+    </section>
+
+    <!-- 2. 搜尋與篩選 -->
+    <section class="space-y-4">
+      <div class="relative max-w-xl">
+        <input type="text" id="search-input" placeholder="全文搜尋標題、網址、筆記、標籤..." class="w-full pl-12 pr-4 py-3 bg-white border border-gray-100 rounded-xl shadow-sm focus:ring-1 focus:ring-blue-200 focus:outline-none text-sm">
+        <span class="absolute left-4 top-3.5 text-gray-400 text-lg">🔍</span>
+      </div>
+      
+      <div class="flex flex-wrap items-center gap-2.5 bg-white p-4 rounded-xl shadow-sm border border-gray-100" id="tag-filter-container">
+        <span class="text-xs text-gray-400 font-medium mr-1">篩選標籤:</span>
+        <button onclick="filterByTag('ALL')" class="tag-chip active-tag px-3.5 py-1.5 rounded-full text-xs font-semibold bg-blue-600 text-white transition ALL-chip cursor-pointer">全部</button>
+      </div>
+    </section>
+
+    <!-- 3. 書籤卡片展示區 -->
+    <main id="bookmark-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-12">
+    </main>
+  </div>
+
+  <!-- 4. 修改書籤彈出視窗 -->
+  <div class="modal opacity-0 pointer-events-none fixed w-full h-full top-0 left-0 flex items-center justify-center z-50" id="edit-modal">
+    <div class="modal-overlay absolute w-full h-full bg-black/50 backdrop-blur-sm"></div>
+    
+    <div class="modal-container bg-white w-11/12 md:max-w-xl mx-auto rounded-2xl shadow-2xl z-50 overflow-y-auto border border-gray-100 max-h-[85vh]">
+      <div class="modal-content p-6 text-left space-y-5">
+        
+        <div class="flex justify-between items-center pb-3 border-b border-gray-100">
+          <h3 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <span>📝</span> 修改書籤內容
+          </h3>
+          <button class="modal-close cursor-pointer text-gray-400 hover:text-gray-600 transition" id="btn-close-modal">&times;</button>
+        </div>
+
+        <form id="edit-form" class="space-y-4">
+          <input type="hidden" id="edit-id">
+          
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">網址 (不可修改)</label>
+            <p id="edit-url-display" class="text-xs text-blue-600 truncate py-1"></p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">書籤標題</label>
+            <input type="text" id="edit-title" required class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-none text-sm">
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">
+              <span>📷</span> 自行選擇本機圖片 (覆蓋自動機制)
+            </label>
+            
+            <input type="file" id="local-file-input" accept="image/*" class="hidden">
+            
+            <div class="flex gap-2 items-center">
+              <button type="button" id="btn-trigger-file" class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium px-4 py-2 rounded-lg transition flex items-center gap-1.5 shadow-sm cursor-pointer">
+                📂 選擇本機圖片檔...
+              </button>
+              <button type="button" id="btn-clear-image" class="hidden bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs px-3 py-2 rounded-lg transition cursor-pointer">
+                移除圖片
+              </button>
+            </div>
+
+            <div id="image-preview-box" class="hidden mt-3 p-2 bg-gray-50 border border-amber-200 rounded-lg flex items-center gap-3">
+              <img id="img-preview" src="" class="w-16 h-12 object-cover rounded border border-gray-200">
+              <span id="img-file-name" class="text-xs text-amber-900 truncate flex-1"></span>
+            </div>
+            
+            <p class="text-[11px] text-gray-400 mt-1">選取檔案後，系統會自動壓縮圖片並套用至該卡片。</p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">分類標籤 (以逗號隔開)</label>
+            <input type="text" id="edit-tags" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-none text-sm" placeholder="例如: 工作, 技術">
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">個人筆記 / 說明</label>
+            <textarea id="edit-note" rows="3" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-none text-sm"></textarea>
+          </div>
+        </form>
+
+        <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
+          <button class="modal-close bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-5 py-2 rounded-lg text-sm transition cursor-pointer" id="btn-cancel-edit">取消</button>
+          <button form="edit-form" type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-2 rounded-lg text-sm transition cursor-pointer">確認修改</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let bookmarks = JSON.parse(localStorage.getItem('bookmarks_v6') || '[]');
+    let fileHandle = null;
+    let currentSearchTerm = '';
+    let currentSelectedTag = 'ALL';
+    let tempSelectedImageBase64 = null;
+
+    const bookmarkList = document.getElementById('bookmark-list');
+    const tagFilterContainer = document.getElementById('tag-filter-container');
+    const searchInput = document.getElementById('search-input');
+    const statusAlert = document.getElementById('status-alert');
+    const fileStatusText = document.getElementById('file-status-text');
+    const urlInput = document.getElementById('url-input');
+
+    const editModal = document.getElementById('edit-modal');
+    const editForm = document.getElementById('edit-form');
+    const editId = document.getElementById('edit-id');
+    const editUrlDisplay = document.getElementById('edit-url-display');
+    const editTitle = document.getElementById('edit-title');
+    const editTags = document.getElementById('edit-tags');
+    const editNote = document.getElementById('edit-note');
+    
+    const localFileInput = document.getElementById('local-file-input');
+    const btnTriggerFile = document.getElementById('btn-trigger-file');
+    const btnClearImage = document.getElementById('btn-clear-image');
+    const imagePreviewBox = document.getElementById('image-preview-box');
+    const imgPreview = document.getElementById('img-preview');
+    const imgFileName = document.getElementById('img-file-name');
+
+    function render() {
+      const filtered = bookmarks.filter(bm => {
+        const matchesTag = currentSelectedTag === 'ALL' || (bm.tags && bm.tags.includes(currentSelectedTag));
+        const query = currentSearchTerm.toLowerCase();
+        return matchesTag && (!query || bm.url.toLowerCase().includes(query) || (bm.title && bm.title.toLowerCase().includes(query)) || (bm.note && bm.note.toLowerCase().includes(query)) || (bm.tags && bm.tags.some(t => t.toLowerCase().includes(query))));
+      });
+
+      bookmarkList.innerHTML = '';
+
+      if (filtered.length === 0) {
+        bookmarkList.innerHTML = `<div class="col-span-full text-center py-20 text-gray-400">目前沒有符合條件的書籤資料</div>`;
+      } else {
+        filtered.forEach(bm => {
+          const card = document.createElement('div');
+          card.className = `bg-white rounded-2xl shadow hover:shadow-lg transition-all duration-300 flex flex-col justify-between border border-gray-100 group overflow-hidden ${bm.fetching && !bm.manual_image ? 'fetching' : ''}`;
+          
+          const tagsHtml = (bm.tags || []).map(t => 
+            `<button onclick="filterByTag('${t}')" class="bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-blue-600 text-xs px-2.5 py-1 rounded-md font-medium transition cursor-pointer">#${t}</button>`
+          ).join(' ');
+
+          const finalImageSource = bm.manual_image || bm.image;
+
+          card.innerHTML = `
+            <div>
+              <a href="${bm.url}" target="_blank" class="block h-48 bg-gray-100 overflow-hidden relative">
+                ${finalImageSource ? 
+                  `<img src="${finalImageSource}" alt="${bm.title}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" onerror="this.src='https://via.placeholder.com/400x240?text=Image+N/A'">` : 
+                  `<div class="w-full h-full flex items-center justify-center text-xs text-gray-400">正在背景擷取中或未選取圖片...</div>`
+                }
+                <div class="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <span class="bg-white/90 text-gray-800 text-xs font-bold px-3 py-1.5 rounded-full shadow-lg">前往網站 ↗</span>
+                </div>
+              </a>
+              
+              <div class="p-5">
+                <h3 class="font-bold text-gray-800 text-base mb-1 line-clamp-1" title="${bm.title}">${(bm.fetching && !bm.title) ? '擷取標題中...' : bm.title}</h3>
+                <p class="text-xs text-blue-600 truncate mb-3">${bm.url}</p>
+                ${bm.note ? `<div class="bg-amber-50 border-l-3 border-amber-400 p-2.5 my-3 text-xs text-amber-950 rounded-r-md">💡 <strong>筆記：</strong> ${bm.note}</div>` : '<div class="h-1 my-3"></div>'}
+                <div class="flex flex-wrap gap-1.5 pt-2 border-t border-gray-100">${tagsHtml}</div>
+              </div>
+            </div>
+
+            <div class="px-5 py-3 bg-gray-50 border-t flex items-center justify-between text-xs mt-1">
+              <span class="text-gray-400">${bm.createdAt ? bm.createdAt.slice(0,10) : ''} 加入</span>
+              <div class="flex gap-2">
+                <button onclick="openEditModal('${bm.id}')" class="text-blue-500 hover:text-blue-700 font-medium transition flex items-center gap-1 cursor-pointer"><span>📝</span> 修改</button>
+                <span class="text-gray-200">|</span>
+                <button onclick="deleteBookmark('${bm.id}')" class="text-gray-400 hover:text-red-500 font-medium transition cursor-pointer">刪除卡片</button>
+              </div>
+            </div>
+          `;
+          bookmarkList.appendChild(card);
+        });
+      }
+
+      const allTags = new Set();
+      bookmarks.forEach(bm => (bm.tags || []).forEach(t => allTags.add(t)));
+      const existingChips = tagFilterContainer.querySelectorAll('.dynamic-tag');
+      existingChips.forEach(chip => chip.remove());
+      Array.from(allTags).forEach(tag => {
+        const btn = document.createElement('button');
+        const isActive = tag === currentSelectedTag;
+        btn.className = `dynamic-tag px-3 py-1.5 rounded-full text-xs font-semibold transition cursor-pointer ${isActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`;
+        btn.textContent = tag;
+        btn.onclick = () => filterByTag(tag);
+        tagFilterContainer.appendChild(btn);
+      });
+
+      if (fileHandle) {
+        fileStatusText.textContent = `已連結本機原檔: ${fileHandle.name} (可點選「儲存原檔」覆寫)`;
+      } else {
+        fileStatusText.textContent = `資料已同步存於瀏覽器 (請點選「開啟 CSV 檔」選擇檔案以進行覆寫儲存)`;
+      }
+      
+      localStorage.setItem('bookmarks_v6', JSON.stringify(bookmarks));
+    }
+
+    // 秒速加入網址
+    document.getElementById('btn-add-fast').onclick = async () => {
+      const targetUrl = urlInput.value.trim();
+      if (!targetUrl || !targetUrl.startsWith('http')) { alert('請貼上完整網址 (需包含 http://)'); return; }
+      
+      const fastBmId = Date.now().toString();
+      const newBookmark = { id: fastBmId, url: targetUrl, title: targetUrl, note: '', tags: [], image: '', manual_image: '', createdAt: new Date().toISOString(), fetching: true };
+
+      bookmarks.unshift(newBookmark);
+      urlInput.value = '';
+      render();
+
+      const apiUrl = `https://api.microlink.io?url=${encodeURIComponent(targetUrl)}&screenshot=true`;
+
+      try {
+        const res = await fetch(apiUrl);
+        if (!res.ok) throw new Error('Fetch failed');
+
+        const resJson = await res.json();
+        if (resJson.status === 'success') {
+          const meta = resJson.data;
+          bookmarks = bookmarks.map(bm => {
+            if (bm.id === fastBmId) {
+              return { ...bm, title: meta.title || targetUrl, image: meta.screenshot?.url || meta.image?.url || '', fetching: false };
+            }
+            return bm;
+          });
+          render();
+        }
+      } catch (err) {
+        bookmarks = bookmarks.map(bm => (bm.id === fastBmId) ? { ...bm, fetching: false } : bm);
+        render();
+      }
+    };
+
+    const toggleModal = () => { document.body.classList.toggle('modal-active'); editModal.classList.toggle('opacity-0'); editModal.classList.toggle('pointer-events-none'); };
+    
+    function openEditModal(id) {
+      const bm = bookmarks.find(b => b.id === id); if (!bm) return;
+      editId.value = bm.id; 
+      editUrlDisplay.textContent = bm.url;
+      editTitle.value = bm.title;
+      editTags.value = bm.tags.join(', '); 
+      editNote.value = bm.note;
+      
+      tempSelectedImageBase64 = bm.manual_image || null;
+      if (tempSelectedImageBase64) {
+        imgPreview.src = tempSelectedImageBase64;
+        imgFileName.textContent = "已套用自訂圖片";
+        imagePreviewBox.classList.remove('hidden');
+        btnClearImage.classList.remove('hidden');
+      } else {
+        imagePreviewBox.classList.add('hidden');
+        btnClearImage.classList.add('hidden');
+      }
+
+      toggleModal();
+    }
+
+    btnTriggerFile.onclick = () => localFileInput.click();
+
+    localFileInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      if (!file.type.startsWith('image/')) {
+        alert('請選擇有效的圖片檔案！');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxW = 400;
+          const scale = maxW / img.width;
+          canvas.width = (img.width > maxW) ? maxW : img.width;
+          canvas.height = (img.width > maxW) ? (img.height * scale) : img.height;
+
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          tempSelectedImageBase64 = canvas.toDataURL('image/jpeg', 0.7);
+          imgPreview.src = tempSelectedImageBase64;
+          imgFileName.textContent = `已載入並壓縮：${file.name}`;
+          imagePreviewBox.classList.remove('hidden');
+          btnClearImage.classList.remove('hidden');
+        };
+        img.src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    };
+
+    btnClearImage.onclick = () => {
+      tempSelectedImageBase64 = '';
+      localFileInput.value = '';
+      imagePreviewBox.classList.add('hidden');
+      btnClearImage.classList.add('hidden');
+    };
+    
+    editForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const tags = editTags.value.split(/[,，]/).map(t => t.trim()).filter(t => t.length > 0);
+
+      bookmarks = bookmarks.map(bm => {
+        if (bm.id === editId.value) {
+          const isFetching = tempSelectedImageBase64 ? false : bm.fetching;
+          return { 
+            ...bm, 
+            title: editTitle.value.trim() || bm.url, 
+            tags: tags, 
+            note: editNote.value.trim(),
+            manual_image: tempSelectedImageBase64 || '', 
+            fetching: isFetching 
+          };
+        }
+        return bm;
+      });
+      render(); 
+      toggleModal(); 
+      showStatus('修改已儲存！', 'bg-green-100 text-green-700 border-green-100');
+    });
+    
+    document.querySelectorAll('.modal-close, .modal-overlay').forEach(el => el.addEventListener('click', e => (e.target === el || el.id === 'btn-close-modal' || el.id === 'btn-cancel-edit') && toggleModal()));
+
+    function deleteBookmark(id) { if (confirm('確定刪除此卡片？')) { bookmarks = bookmarks.filter(bm => bm.id !== id); render(); } }
+    function filterByTag(tag) { currentSelectedTag = tag; render(); }
+    searchInput.addEventListener('input', (e) => { currentSearchTerm = e.target.value.trim(); render(); });
+
+    function generateCSVString() {
+      let csv = '\uFEFFid,url,title,note,tags,image,manual_image,createdAt\n';
+      bookmarks.forEach(bm => {
+        const row = [
+          bm.id,
+          bm.url,
+          bm.title,
+          bm.note,
+          (bm.tags || []).join(';'),
+          bm.image,
+          bm.manual_image || '',
+          bm.createdAt
+        ].map(val => `"${(val || '').toString().replace(/"/g, '""')}"`).join(',');
+        csv += row + '\n';
+      });
+      return csv;
+    }
+    
+    function parseCSVText(text) {
+      const lines = text.split(/\r\n|\n/); 
+      const res = [];
+      for (let i = 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        const cols = []; let cur = ''; let inQ = false;
+        for (let c = 0; c < lines[i].length; c++) {
+          const char = lines[i][c];
+          if (char === '"') inQ = !inQ; else if (char === ',' && !inQ) { cols.push(cur); cur = ''; } else cur += char;
+        }
+        cols.push(cur);
+        if (cols.length >= 2) {
+          res.push({ 
+            id: cols[0] || Date.now().toString(), 
+            url: cols[1], 
+            title: cols[2] || cols[1], 
+            note: cols[3] || '', 
+            tags: cols[4] ? cols[4].split(';') : ['未分類'], 
+            image: cols[5] || '', 
+            manual_image: cols[6] || '', 
+            createdAt: cols[7] || new Date().toISOString() 
+          });
+        }
+      }
+      return res;
+    }
+
+    // 1. 開啟 CSV 檔 (優先取得控制權以供寫回原檔)
+    document.getElementById('btn-open-file').onclick = async () => {
+      if ('showOpenFilePicker' in window) {
+        try {
+          const [handle] = await window.showOpenFilePicker({
+            types: [{ description: 'CSV Files', accept: { 'text/csv': ['.csv'] } }]
+          });
+          fileHandle = handle;
+          const file = await fileHandle.getFile();
+          const text = await file.text();
+          bookmarks = parseCSVText(text);
+          render();
+          showStatus(`成功連結並載入原檔：「${file.name}」`, 'bg-green-100 text-green-700 border-green-100');
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+        }
+      }
+      
+      const input = document.createElement('input'); 
+      input.type = 'file'; 
+      input.accept = '.csv'; 
+      input.onchange = e => { 
+        const file = e.target.files[0]; 
+        if (!file) return;
+        const reader = new FileReader(); 
+        reader.onload = evt => { 
+          bookmarks = parseCSVText(evt.target.result); 
+          fileHandle = null;
+          render(); 
+          showStatus(`已載入檔案：「${file.name}」（因權限限制，儲存時將自動改為下載備份）`, 'bg-amber-100 text-amber-800 border-amber-200');
+        }; 
+        reader.readAsText(file, 'utf-8'); 
+      }; 
+      input.click(); 
+    };
+
+    // 2. 儲存原檔 (若無控制權或無法覆寫，則自動彈出下載備份)
+    document.getElementById('btn-save-file').onclick = async () => {
+      const csvData = generateCSVString();
+      
+      if (fileHandle) {
+        try {
+          const writable = await fileHandle.createWritable();
+          await writable.write(csvData);
+          await writable.close();
+          showStatus(`成功直接覆寫儲存至原檔：「${fileHandle.name}」！`, 'bg-green-100 text-green-700 border-green-100');
+          return;
+        } catch (err) {
+          console.warn('無法覆寫原檔，自動改用下載匯出', err);
+        }
+      }
+
+      fallbackDownload(csvData, fileHandle ? fileHandle.name : `智能書籤_最新資料.csv`);
+    };
+
+    // 3. 另存新檔
+    document.getElementById('btn-save-as').onclick = async () => {
+      const csvData = generateCSVString();
+      if ('showSaveFilePicker' in window) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: `智能書籤_備份_${new Date().toISOString().slice(0,10)}.csv`,
+            types: [{ description: 'CSV Files', accept: { 'text/csv': ['.csv'] } }]
+          });
+          fileHandle = handle;
+          const writable = await handle.createWritable();
+          await writable.write(csvData);
+          await writable.close();
+          render();
+          showStatus('已順利另存新檔！', 'bg-green-100 text-green-700 border-green-100');
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+        }
+      }
+      fallbackDownload(csvData, `智能書籤_備份_${new Date().toISOString().slice(0,10)}.csv`);
+    };
+
+    function fallbackDownload(content, filename) {
+      const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      showStatus('已順利下載最新 CSV 檔案！', 'bg-green-100 text-green-700 border-green-100');
+    }
+
+    function showStatus(msg, cls) { 
+      statusAlert.className = `p-4 rounded-xl text-sm font-medium ${cls} my-4`; 
+      statusAlert.textContent = msg; 
+      statusAlert.classList.remove('hidden'); 
+      setTimeout(() => statusAlert.classList.add('hidden'), 5000); 
+    }
+
+    render();
+  </script>
+</body>
+</html>
